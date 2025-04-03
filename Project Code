@@ -1,0 +1,84 @@
+#include "FreeRTOS.h"
+#include "task.h"
+#include "semphr.h"
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+
+#define BUFFER_SIZE 50
+#define EVENT_LENGTH 100
+
+// Event Logger Structure
+typedef struct {
+    char events[BUFFER_SIZE][EVENT_LENGTH];
+    time_t timestamps[BUFFER_SIZE];
+    int head, tail, count;
+} EventLogger;
+
+EventLogger logger;
+SemaphoreHandle_t loggerMutex;
+
+// Initialize the Logger
+void initializeLogger() {
+    logger.head = 0;
+    logger.tail = 0;
+    logger.count = 0;
+    loggerMutex = xSemaphoreCreateMutex();
+}
+
+// Log an Event
+void logEvent(const char *eventDescription) {
+    if (xSemaphoreTake(loggerMutex, pdMS_TO_TICKS(100)) == pdTRUE) { // Acquire Mutex
+        if (logger.count == BUFFER_SIZE) {
+            logger.head = (logger.head + 1) % BUFFER_SIZE; // Overwrite oldest event
+            logger.count--;
+        }
+        strncpy(logger.events[logger.tail], eventDescription, EVENT_LENGTH - 1);
+        logger.events[logger.tail][EVENT_LENGTH - 1] = '\0'; // Ensure null termination
+        logger.timestamps[logger.tail] = time(NULL);
+        logger.tail = (logger.tail + 1) % BUFFER_SIZE;
+        logger.count++;
+        xSemaphoreGive(loggerMutex); // Release Mutex
+    }
+}
+
+// Retrieve and Print Logged Events
+void retrieveAndPrintEvents() {
+    if (xSemaphoreTake(loggerMutex, pdMS_TO_TICKS(100)) == pdTRUE) { // Acquire Mutex
+        int current = logger.head;
+        for (int i = 0; i < logger.count; i++) {
+            printf("Event: %s | Timestamp: %s", logger.events[current], ctime(&logger.timestamps[current]));
+            current = (current + 1) % BUFFER_SIZE;
+        }
+        xSemaphoreGive(loggerMutex); // Release Mutex
+    }
+}
+
+// Logger Task
+void loggerTask(void *params) {
+    while (1) {
+        logEvent("Periodic system check completed.");
+        vTaskDelay(pdMS_TO_TICKS(5000)); // Log every 5 seconds
+    }
+}
+
+// Simulation Task for Generating Security Events
+void securityEventSimulatorTask(void *params) {
+    while (1) {
+        logEvent("Unauthorized access attempt detected.");
+        vTaskDelay(pdMS_TO_TICKS(7000)); // Generate an event every 7 seconds
+    }
+}
+int main() {
+    initializeLogger();
+
+    // Create Tasks
+    xTaskCreate(loggerTask, "Logger Task", 1000, NULL, 2, NULL);
+    xTaskCreate(securityEventSimulatorTask, "Security Event Simulator Task", 1000, NULL, 1, NULL);
+
+    vTaskStartScheduler();
+
+    // Should never reach here
+    while (1) { }
+    return 0;
+}
